@@ -22,10 +22,17 @@ sudo defaults write /Library/Preferences/com.apple.keyboardtype "keyboardtype" -
 # Update VoiceOver Utility to allow VoiceOver to be controlled with AppleScript
 # by creating a special Accessibility DB file (SIP must be disabled) and
 # updating the user defaults system to reflect this change.
-if csrutil status | grep -Eq  "System Integrity Protection status: (disabled|unknown)"; then
+# Check if SIP is disabled
+if csrutil status | grep -Eq "System Integrity Protection status: (disabled|unknown)"; then
+    # Enable AppleScript for VoiceOver in the accessibility database
     sudo bash -c 'echo -n "a" > /private/var/db/Accessibility/.VoiceOverAppleScriptEnabled'
 fi
-defaults write com.apple.VoiceOver4/default SCREnableAppleScript -bool YES
+
+# macOS 15 (Sequoia) or later
+if [ "$(sw_vers -productVersion)" == "15" ]; then
+    # Modify sandboxed plist for macOS 15 (Sequoia)
+    sudo plutil -replace SCREnableAppleScript -bool true ~/Library/Group\ Containers/group.com.apple.VoiceOver/Library/Preferences/com.apple.VoiceOver4/default.plist
+fi
 
 # https://developer.apple.com/support/expiration/
 # Enterprise iOS Distribution Certificates generated between February 7 and September 1st, 2020 will expire on February 7, 2023.

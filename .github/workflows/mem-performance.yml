@@ -1,0 +1,196 @@
+name: Performance Benchmark
+
+description: Check performance
+
+runs:
+  using: composite
+  steps:
+
+    # Step 1: Install sysbench
+    - name: Install sysbench
+      shell: bash
+      run: brew install sysbench
+
+    # Step 2: Memory Metrics Test
+    - name: Memory Metrics Test
+      shell: bash
+      id: memory_metrics
+      run: |
+        echo "========================================"
+        echo "🚀 Memory Metrics Test Started"
+        echo "========================================"
+        
+        # Get total memory directly from macOS system info
+        total_memory_bytes=$(sysctl -n hw.memsize)
+        total_memory_gb=$(sysctl -n hw.memsize | awk '{print $1 / 1024 / 1024 / 1024}')
+        echo "Detected Total Memory: ${total_memory_gb} GB"
+        
+        # Detect correct page size (macOS 15 uses 16K pages)
+        page_size=$(sysctl -n hw.pagesize)
+        echo "Detected Page Size: $page_size bytes"
+        
+        # Get free memory from vm_stat
+        vm_stat_output=$(vm_stat)
+        pages_free=$(echo "$vm_stat_output" | awk '/Pages free/ {gsub("\\.","",$3); print $3}')
+        free_memory_bytes=$((pages_free * page_size))
+        free_memory_mb=$((free_memory_bytes / 1024 / 1024))
+        
+        # Compute used memory correctly
+        used_memory_mb=$(( (total_memory_bytes - free_memory_bytes) / 1024 / 1024 ))
+        
+        # Ensure total memory is valid before calculating percentage
+        if [ "$total_memory_bytes" -gt 0 ]; then
+          used_percentage=$(( (used_memory_mb * 100) / (total_memory_bytes / 1024 / 1024) ))
+        else
+          used_percentage=0
+        fi
+        
+        # Reserve memory for the runner (1GB recommended)
+        runner_reserved_memory_mb=1024  # 1GB reserved for system processes
+        adjusted_memory_mb=$(( (total_memory_bytes / 1024 / 1024) - runner_reserved_memory_mb ))
+        
+        # Ensure adjusted memory does not go below a safe limit (2GB)
+        safe_memory_limit_mb=2048
+        if [ "$adjusted_memory_mb" -lt "$safe_memory_limit_mb" ]; then
+          adjusted_memory_mb=$safe_memory_limit_mb
+        fi
+        
+        # Print memory details
+        echo "🖥️ Total Memory: ${total_memory_gb} GB"
+        echo "🆓 Free Memory: ${free_memory_mb} MB"
+        echo "🔥 Memory Used: ${used_memory_mb} MB"
+        echo "📊 Memory Usage Percentage: $used_percentage%"
+        echo "⚠️ Reserved Memory for Runner: ${runner_reserved_memory_mb} MB"
+        echo "✅ Memory Available for Tests: ${adjusted_memory_mb} MB"
+        
+        # Check if memory usage is too high (above 70%)
+        memory_usage_limit=70
+        if [ "$used_percentage" -gt "$memory_usage_limit" ]; then
+          echo "⚠️ WARNING: Memory usage is above ${memory_usage_limit}%! (${used_percentage}%)"
+          echo "⚠️ Consider reducing memory usage before running tests."
+        fi
+        
+        # Store values in GitHub Actions environment variables
+        echo "TOTAL_MEMORY=$adjusted_memory_mb" >> $GITHUB_ENV
+        echo "USED_PERCENTAGE=$used_percentage" >> $GITHUB_ENV
+
+
+    # Step 3: Benchmark Memory Read Speed
+    - name: Benchmark Memory Read Speed
+      shell: bash
+      run: |
+        echo "Benchmarking memory read speed..."
+        
+        START_TIME=$(date +%s)  # Capture start time
+        
+        sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read run | tee benchmark_read.txt
+        
+        END_TIME=$(date +%s)  # Capture end time
+        EXECUTION_TIME=$((END_TIME - START_TIME))  # Calculate elapsed time
+        
+        echo "Execution Time: $EXECUTION_TIME seconds"
+    
+        # Extract throughput value (remove parentheses and keep only the number)
+        THROUGHPUT=$(grep "MiB transferred" benchmark_read.txt | awk -F'[()]' '{print $2}' | awk '{print $1}')
+        
+        # Print extracted value
+        echo "Extracted Memory Read Throughput: ${THROUGHPUT} MB/sec"
+        
+        # Define minimum expected throughput
+        MIN_THROUGHPUT=500
+        
+        # Check if throughput is valid and numeric using bc for floating point comparison
+        if [[ -z "$THROUGHPUT" || ! "$THROUGHPUT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "⚠️ Warning: Could not extract a valid memory read speed."
+        elif (( $(echo "$THROUGHPUT < $MIN_THROUGHPUT" | bc -l) )); then
+            echo "⚠️ Warning: Memory read speed is below the expected threshold: ${THROUGHPUT} MB/sec (Expected: ${MIN_THROUGHPUT} MB/sec)"
+        else
+            echo "✅ Memory read speed: ${THROUGHPUT} MB/sec (Threshold: ${MIN_THROUGHPUT} MB/sec)"
+        fi
+            
+        # Export variables for telemetry tracking
+        echo "EXECUTION_TIME=$EXECUTION_TIME" >> $GITHUB_ENV
+        echo "THROUGHPUT=$THROUGHPUT" >> $GITHUB_ENV
+    
+        echo "Benchmark completed!"
+
+
+    # Step 4: Benchmark Memory Write Speed
+    - name: Benchmark Memory Write Speed
+      shell: bash
+      run: |
+        echo "Benchmarking memory write speed..."
+        
+        START_TIME=$(date +%s)  # Capture start time
+        
+        sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write run | tee benchmark_write.txt
+        
+        END_TIME=$(date +%s)  # Capture end time
+        EXECUTION_TIME=$((END_TIME - START_TIME))  # Calculate elapsed time
+        
+        echo "Execution Time: $EXECUTION_TIME seconds"
+    
+        # Extract throughput value (remove parentheses and keep only the number)
+        THROUGHPUT=$(grep "MiB transferred" benchmark_write.txt | awk -F'[()]' '{print $2}' | awk '{print $1}')
+        
+        # Print extracted value
+        echo "Extracted Memory Write Throughput: ${THROUGHPUT} MB/sec"
+        
+        # Define minimum expected throughput
+        MIN_THROUGHPUT=500
+        
+        # Check if throughput is valid and numeric using bc for floating point comparison
+        if [[ -z "$THROUGHPUT" || ! "$THROUGHPUT" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "⚠️ Warning: Could not extract a valid memory write speed."
+        elif (( $(echo "$THROUGHPUT < $MIN_THROUGHPUT" | bc -l) )); then
+            echo "⚠️ Warning: Memory write speed is below the expected threshold: ${THROUGHPUT} MB/sec (Expected: ${MIN_THROUGHPUT} MB/sec)"
+        else
+            echo "✅ Memory write speed: ${THROUGHPUT} MB/sec (Threshold: ${MIN_THROUGHPUT} MB/sec)"
+        fi
+    
+        # Export variables for telemetry tracking
+        echo "EXECUTION_TIME_WRITE=$EXECUTION_TIME" >> $GITHUB_ENV
+        echo "THROUGHPUT_WRITE=$THROUGHPUT" >> $GITHUB_ENV
+    
+        echo "Benchmark completed!"
+
+
+    # Step 5: Basic Memory Benchmark
+    - name: Basic Memory Benchmark
+      shell: bash
+      run: |
+        sysbench memory run
+
+
+    # Step 6: Customizing Block Size & Total Memory
+    - name: Customizing Block Size & Total Memory
+      shell: bash
+      run: |
+        sysbench memory --memory-block-size=1M --memory-total-size=10G run
+
+
+    # Step 7: Multi-Threaded Memory Test
+    - name: Multi-Threaded Memory Test
+      shell: bash
+      run: |
+        sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read --threads=8 run
+        sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write --threads=8 run
+
+
+    # Step 8: Running for a Fixed Time
+    - name: Running for a Fixed Time
+      shell: bash
+      run: |
+        sysbench memory --memory-block-size=1M --memory-total-size=0 --memory-oper=read --threads=8 --time=30 run
+        sysbench memory --memory-block-size=1M --memory-total-size=0 --memory-oper=write --threads=8 --time=30 run
+
+
+    # Step 9: Extreme Stress Test
+    - name: Extreme Stress Test
+      shell: bash
+      run: |
+        echo "⚠️ Running an extreme memory stress test! This may take a long time."
+        sysbench memory --memory-block-size=4M --memory-total-size=100G --memory-oper=write --threads=16 run || echo "⚠️ Test may have failed due to system limits."
+        echo "========================================"
+        echo "🚀 Memory Metrics Test End"
+        echo "========================================"

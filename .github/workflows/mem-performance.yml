@@ -1,4 +1,4 @@
-name: memory Speed on macOS
+name: Memory Speed on macOS
 
 on:  
   workflow_dispatch:  # Allows manual trigger
@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ['macos-13','macos-13-xlarge', 'macos-14', 'macos-14-large','macos-14-xlarge','macos-15', 'macos-15-large','macos-15-xlarge']
+        os: ['macos-13', 'macos-13-xlarge', 'macos-14', 'macos-14-large', 'macos-14-xlarge', 'macos-15', 'macos-15-large', 'macos-15-xlarge']
 
     steps:
       - name: Checkout repository
@@ -55,7 +55,7 @@ jobs:
             echo "⚠️ WARNING: Memory usage is high (${used_percentage}%), exceeding ${WARNING_THRESHOLD}%."
           fi
 
-            - name: Benchmark Memory Read Speed
+      - name: Benchmark Memory Read Speed
         run: |
           echo "📊 Benchmarking memory read speed..."
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read run | tee benchmark_read.txt
@@ -137,6 +137,7 @@ jobs:
           mkdir -p benchmark_results
           mv benchmark_read.txt benchmark_results/
           mv benchmark_write.txt benchmark_results/
+
 
 
 #name: memory Speed on macOS

@@ -55,15 +55,47 @@ jobs:
             echo "⚠️ WARNING: Memory usage is high (${used_percentage}%), exceeding ${WARNING_THRESHOLD}%."
           fi
 
-      - name: Benchmark Memory Read Speed
+            - name: Benchmark Memory Read Speed
         run: |
           echo "📊 Benchmarking memory read speed..."
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read run | tee benchmark_read.txt
-   
+          
+          # Extract read speed from sysbench output
+          read_speed=$(grep "transferred" benchmark_read.txt | awk '{print $NF}')
+          echo "Memory Read Speed: ${read_speed} MB/sec"
+
+          # Define thresholds
+          MIN_READ_SPEED=25000  # Minimum acceptable read speed
+          WARNING_READ_SPEED=20000  # Warning level
+
+          # Check conditions
+          if (( $(echo "$read_speed < $WARNING_READ_SPEED" | bc -l) )); then
+            echo "❌ CRITICAL: Memory Read Speed too low! (${read_speed} MB/sec < ${WARNING_READ_SPEED} MB/sec)"
+            exit 1  # Fail the workflow
+          elif (( $(echo "$read_speed < $MIN_READ_SPEED" | bc -l) )); then
+            echo "⚠️ WARNING: Memory Read Speed below optimal (${read_speed} MB/sec). Expected > ${MIN_READ_SPEED} MB/sec"
+          fi
+
       - name: Benchmark Memory Write Speed
         run: |
           echo "📊 Benchmarking memory write speed..."
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write run | tee benchmark_write.txt
+
+          # Extract write speed from sysbench output
+          write_speed=$(grep "transferred" benchmark_write.txt | awk '{print $NF}')
+          echo "Memory Write Speed: ${write_speed} MB/sec"
+
+          # Define thresholds
+          MIN_WRITE_SPEED=20000  # Minimum acceptable write speed
+          WARNING_WRITE_SPEED=18000  # Warning level
+
+          # Check conditions
+          if (( $(echo "$write_speed < $WARNING_WRITE_SPEED" | bc -l) )); then
+            echo "❌ CRITICAL: Memory Write Speed too low! (${write_speed} MB/sec < ${WARNING_WRITE_SPEED} MB/sec)"
+            exit 1  # Fail the workflow
+          elif (( $(echo "$write_speed < $MIN_WRITE_SPEED" | bc -l) )); then
+            echo "⚠️ WARNING: Memory Write Speed below optimal (${write_speed} MB/sec). Expected > ${MIN_WRITE_SPEED} MB/sec"
+          fi
           
       - name: Benchmark Memory Latency
         run: |

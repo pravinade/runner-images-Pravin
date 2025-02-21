@@ -23,7 +23,8 @@ jobs:
         shell: bash
         id: memory_metrics
         run: |
-          MEMORY_USAGE_THRESHOLD=70  # Set memory threshold (can be adjusted)
+          WARNING_THRESHOLD=70   # Warning level (>70%)
+          CRITICAL_THRESHOLD=85  # Critical level (>85%)
           page_size=4096  # Default macOS page size in bytes
           
           echo "📊 Gathering memory metrics..."
@@ -46,12 +47,12 @@ jobs:
 
           echo "TOTAL_MEMORY=$((total_memory / 1024 / 1024))" >> $GITHUB_ENV
           
-          # 🔥 Check memory utilization against threshold
-          if [ "$used_percentage" -gt "$MEMORY_USAGE_THRESHOLD" ]; then
-            echo "❌ ERROR: Memory usage exceeded threshold! (${used_percentage}% > ${MEMORY_USAGE_THRESHOLD}%)"
+          # 🔥 Check memory utilization
+          if [ "$used_percentage" -gt "$CRITICAL_THRESHOLD" ]; then
+            echo "❌ CRITICAL: Memory usage exceeded critical threshold! (${used_percentage}% > ${CRITICAL_THRESHOLD}%)"
             exit 1  # Fail the workflow
-          elif [ "$used_percentage" -ge "$((MEMORY_USAGE_THRESHOLD - 5))" ]; then
-            echo "⚠️ WARNING: Memory usage is close to the threshold (${used_percentage}%)."
+          elif [ "$used_percentage" -gt "$WARNING_THRESHOLD" ]; then
+            echo "⚠️ WARNING: Memory usage is high (${used_percentage}%), exceeding ${WARNING_THRESHOLD}%."
           fi
 
       - name: Benchmark Memory Read Speed

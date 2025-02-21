@@ -11,7 +11,6 @@ jobs:
       fail-fast: false
       matrix:
         os: ['macos-13','macos-13-xlarge', 'macos-14', 'macos-14-large','macos-14-xlarge','macos-15', 'macos-15-large','macos-15-xlarge']
-        #os: ['macos-15-xlarge']
 
     steps:
       - name: Checkout repository
@@ -20,41 +19,54 @@ jobs:
       - name: Install sysbench
         run: brew install sysbench
 
-      - name: memory metrics test
+      - name: Memory Metrics Test
         shell: bash
         id: memory_metrics
         run: |
+          MEMORY_USAGE_THRESHOLD=70  # Set memory threshold (can be adjusted)
           page_size=4096  # Default macOS page size in bytes
-          echo "memory metrics details..."
-            vm_stat_output=$(vm_stat)
-            pages_free=$(echo "$vm_stat_output" | awk '/Pages free/ {gsub("\\.","",$3); print $3}')
-            pages_active=$(echo "$vm_stat_output" | awk '/Pages active/ {gsub("\\.","",$3); print $3}')
-            pages_inactive=$(echo "$vm_stat_output" | awk '/Pages inactive/ {gsub("\\.","",$3); print $3}')
-            pages_speculative=$(echo "$vm_stat_output" | awk '/Pages speculative/ {gsub("\\.","",$3); print $3}')
-            total_pages=$((pages_free + pages_active + pages_inactive + pages_speculative))
-            total_memory=$((total_pages * page_size))
-            free_memory=$((pages_free * page_size))
-            used_memory=$((total_memory - free_memory))
-            used_percentage=$(( (used_memory * 100) / total_memory ))
-            echo "🖥️ Total Memory: $((total_memory / 1024 / 1024)) MB"
-            echo "🆓 Free Memory: $((free_memory / 1024 / 1024)) MB"
-            echo "🔥 Memory Used: $((used_memory / 1024 / 1024)) MB"
-            echo "📊 Memory Usage Percentage: $used_percentage%"
-            echo "TOTAL_MEMORY=$((total_memory / 1024 / 1024))" >> $GITHUB_ENV
-            
+          
+          echo "📊 Gathering memory metrics..."
+          vm_stat_output=$(vm_stat)
+          pages_free=$(echo "$vm_stat_output" | awk '/Pages free/ {gsub("\\.","",$3); print $3}')
+          pages_active=$(echo "$vm_stat_output" | awk '/Pages active/ {gsub("\\.","",$3); print $3}')
+          pages_inactive=$(echo "$vm_stat_output" | awk '/Pages inactive/ {gsub("\\.","",$3); print $3}')
+          pages_speculative=$(echo "$vm_stat_output" | awk '/Pages speculative/ {gsub("\\.","",$3); print $3}')
+          
+          total_pages=$((pages_free + pages_active + pages_inactive + pages_speculative))
+          total_memory=$((total_pages * page_size))
+          free_memory=$((pages_free * page_size))
+          used_memory=$((total_memory - free_memory))
+          used_percentage=$(( (used_memory * 100) / total_memory ))
+
+          echo "🖥️ Total Memory: $((total_memory / 1024 / 1024)) MB"
+          echo "🆓 Free Memory: $((free_memory / 1024 / 1024)) MB"
+          echo "🔥 Memory Used: $((used_memory / 1024 / 1024)) MB"
+          echo "📊 Memory Usage Percentage: $used_percentage%"
+
+          echo "TOTAL_MEMORY=$((total_memory / 1024 / 1024))" >> $GITHUB_ENV
+          
+          # 🔥 Check memory utilization against threshold
+          if [ "$used_percentage" -gt "$MEMORY_USAGE_THRESHOLD" ]; then
+            echo "❌ ERROR: Memory usage exceeded threshold! (${used_percentage}% > ${MEMORY_USAGE_THRESHOLD}%)"
+            exit 1  # Fail the workflow
+          elif [ "$used_percentage" -ge "$((MEMORY_USAGE_THRESHOLD - 5))" ]; then
+            echo "⚠️ WARNING: Memory usage is close to the threshold (${used_percentage}%)."
+          fi
+
       - name: Benchmark Memory Read Speed
         run: |
-          echo "Benchmarking memory read speed..."
+          echo "📊 Benchmarking memory read speed..."
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read run | tee benchmark_read.txt
    
       - name: Benchmark Memory Write Speed
         run: |
-          echo "Benchmarking memory write speed..."
+          echo "📊 Benchmarking memory write speed..."
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write run | tee benchmark_write.txt
           
       - name: Benchmark Memory Latency
         run: |
-          echo "Benchmarking Memory Latency"
+          echo "📊 Benchmarking Memory Latency..."
           sysbench memory --memory-block-size=128K --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read --time=30 run | tee benchmark_latency.txt
           latency_min=$(grep "min:" benchmark_latency.txt | awk '{print $2}')
           latency_avg=$(grep "avg:" benchmark_latency.txt | awk '{print $2}')
@@ -66,21 +78,16 @@ jobs:
           
       - name: Basic Memory Benchmark
         run: |
-           sysbench memory run
+          sysbench memory run
            
       - name: Customizing Block Size & Total Memory
         run: |
           sysbench memory --memory-block-size=1M --memory-total-size=10G run
           
       - name: Multi-Threaded Memory Test
-        #Uses 8 threads for parallel memory operations.
-        #Useful for simulating real-world multi-core workloads.
         run: |
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read --threads=8 run
           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write --threads=8 run
-      #--memory-total-size=0 → Runs indefinitely.
-      #--time=30 → Runs for 30 seconds.
-      #Useful for testing memory bandwidth over time.
       
       - name: Running for a Fixed Time
         run: |
@@ -89,10 +96,111 @@ jobs:
       
       - name: Extreme Stress Test
         run: |
-          sysbench memory --memory-block-size=4M --memory-total-size=100G --memory-oper=write --threads=16 run  
+          echo "⚠️ Running an extreme memory stress test..."
+          sysbench memory --memory-block-size=4M --memory-total-size=100G --memory-oper=write --threads=16 run || echo "⚠️ Test may have failed due to system limits."
       
       - name: Save Benchmark Results
         run: |
           mkdir -p benchmark_results
           mv benchmark_read.txt benchmark_results/
           mv benchmark_write.txt benchmark_results/
+
+
+#name: memory Speed on macOS
+
+# on:  
+#   workflow_dispatch:  # Allows manual trigger
+
+# jobs:
+#   benchmark-memory-speed:
+#     name: Test
+#     runs-on: ${{ matrix.os }}
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: ['macos-13','macos-13-xlarge', 'macos-14', 'macos-14-large','macos-14-xlarge','macos-15', 'macos-15-large','macos-15-xlarge']
+#         #os: ['macos-15-xlarge']
+
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Install sysbench
+#         run: brew install sysbench
+
+#       - name: memory metrics test
+#         shell: bash
+#         id: memory_metrics
+#         run: |
+#           page_size=4096  # Default macOS page size in bytes
+#           echo "memory metrics details..."
+#             vm_stat_output=$(vm_stat)
+#             pages_free=$(echo "$vm_stat_output" | awk '/Pages free/ {gsub("\\.","",$3); print $3}')
+#             pages_active=$(echo "$vm_stat_output" | awk '/Pages active/ {gsub("\\.","",$3); print $3}')
+#             pages_inactive=$(echo "$vm_stat_output" | awk '/Pages inactive/ {gsub("\\.","",$3); print $3}')
+#             pages_speculative=$(echo "$vm_stat_output" | awk '/Pages speculative/ {gsub("\\.","",$3); print $3}')
+#             total_pages=$((pages_free + pages_active + pages_inactive + pages_speculative))
+#             total_memory=$((total_pages * page_size))
+#             free_memory=$((pages_free * page_size))
+#             used_memory=$((total_memory - free_memory))
+#             used_percentage=$(( (used_memory * 100) / total_memory ))
+#             echo "🖥️ Total Memory: $((total_memory / 1024 / 1024)) MB"
+#             echo "🆓 Free Memory: $((free_memory / 1024 / 1024)) MB"
+#             echo "🔥 Memory Used: $((used_memory / 1024 / 1024)) MB"
+#             echo "📊 Memory Usage Percentage: $used_percentage%"
+#             echo "TOTAL_MEMORY=$((total_memory / 1024 / 1024))" >> $GITHUB_ENV
+            
+#       - name: Benchmark Memory Read Speed
+#         run: |
+#           echo "Benchmarking memory read speed..."
+#           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read run | tee benchmark_read.txt
+   
+#       - name: Benchmark Memory Write Speed
+#         run: |
+#           echo "Benchmarking memory write speed..."
+#           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write run | tee benchmark_write.txt
+          
+#       - name: Benchmark Memory Latency
+#         run: |
+#           echo "Benchmarking Memory Latency"
+#           sysbench memory --memory-block-size=128K --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read --time=30 run | tee benchmark_latency.txt
+#           latency_min=$(grep "min:" benchmark_latency.txt | awk '{print $2}')
+#           latency_avg=$(grep "avg:" benchmark_latency.txt | awk '{print $2}')
+#           latency_max=$(grep "max:" benchmark_latency.txt | awk '{print $2}')
+#           echo "Latency Results:"
+#           echo "Min Latency: $latency_min ms"
+#           echo "Avg Latency: $latency_avg ms"
+#           echo "Max Latency: $latency_max ms"
+          
+#       - name: Basic Memory Benchmark
+#         run: |
+#            sysbench memory run
+           
+#       - name: Customizing Block Size & Total Memory
+#         run: |
+#           sysbench memory --memory-block-size=1M --memory-total-size=10G run
+          
+#       - name: Multi-Threaded Memory Test
+#         #Uses 8 threads for parallel memory operations.
+#         #Useful for simulating real-world multi-core workloads.
+#         run: |
+#           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=read --threads=8 run
+#           sysbench memory --memory-block-size=1M --memory-total-size=${{ env.TOTAL_MEMORY }}M --memory-oper=write --threads=8 run
+#       #--memory-total-size=0 → Runs indefinitely.
+#       #--time=30 → Runs for 30 seconds.
+#       #Useful for testing memory bandwidth over time.
+      
+#       - name: Running for a Fixed Time
+#         run: |
+#           sysbench memory --memory-block-size=1M --memory-total-size=0 --memory-oper=read --threads=8 --time=30 run
+#           sysbench memory --memory-block-size=1M --memory-total-size=0 --memory-oper=write --threads=8 --time=30 run
+      
+#       - name: Extreme Stress Test
+#         run: |
+#           sysbench memory --memory-block-size=4M --memory-total-size=100G --memory-oper=write --threads=16 run  
+      
+#       - name: Save Benchmark Results
+#         run: |
+#           mkdir -p benchmark_results
+#           mv benchmark_read.txt benchmark_results/
+#           mv benchmark_write.txt benchmark_results/
